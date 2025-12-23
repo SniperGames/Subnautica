@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Subnautica-like – 3D FPP (DZIAŁAJĄCY KLIMAT)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { margin:0; overflow:hidden; background:#000; }
+    #ui {
+      position:fixed; top:10px; left:50%; transform:translateX(-50%);
+      background:rgba(0,0,0,.6); color:#e6f0ff;
+      padding:8px 14px; border-radius:10px;
+      font-family:system-ui; font-size:13px; z-index:10
+    }
+    #crosshair {
+      position:fixed; left:50%; top:50%; width:6px; height:6px;
+      margin-left:-3px; margin-top:-3px; border-radius:50%;
+      background:#ffffffcc; z-index:10
+    }
+  </style>
+</head>
+<body>
+<div id="ui">WASD – pływanie • Myszka (przytrzymaj LPM) – rozglądanie • Spacja / Ctrl – góra dół</div>
+<div id="crosshair"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+// ================= SCENA =================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x001e2d);
+scene.fog = new THREE.Fog(0x001e2d, 5, 80);
+
+// ================= KAMERA (FPP) =================
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 500);
+camera.position.set(0, 0, 10);
+
+// ================= RENDERER =================
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ================= ŚWIATŁO =================
+scene.add(new THREE.AmbientLight(0x406070, 0.6));
+
+const sun = new THREE.DirectionalLight(0x88ccff, 0.8);
+sun.position.set(0, 50, 50);
+scene.add(sun);
+
+const flashlight = new THREE.PointLight(0xffffff, 1.2, 40);
+scene.add(flashlight);
+
+// ================= DNO OCEANU =================
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400, 20, 20),
+  new THREE.MeshStandardMaterial({ color:0x1f6f5a })
+);
+floor.rotation.x = -Math.PI/2;
+floor.position.y = -20;
+scene.add(floor);
+
+// ================= SKAŁY =================
+for(let i=0;i<50;i++){
+  const rock = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(1+Math.random()*3),
+    new THREE.MeshStandardMaterial({ color:0x2c3e50 })
+  );
+  rock.position.set(
+    (Math.random()-0.5)*150,
+    -20+Math.random()*5,
+    (Math.random()-0.5)*150
+  );
+  scene.add(rock);
+}
+
+// ================= RYBY =================
+const fishes = [];
+for(let i=0;i<30;i++){
+  const f = new THREE.Mesh(
+    new THREE.SphereGeometry(0.4, 12, 12),
+    new THREE.MeshStandardMaterial({ color:0x88ccff })
+  );
+  f.position.set(
+    (Math.random()-0.5)*80,
+    -15+Math.random()*10,
+    (Math.random()-0.5)*80
+  );
+  f.userData.v = 0.02+Math.random()*0.03;
+  scene.add(f);
+  fishes.push(f);
+}
+
+// ================= STEROWANIE FPP (POINTER LOCK – JAK W SUBNAUTICA)
+let yaw = 0, pitch = 0;
+
+document.body.addEventListener('click', () => {
+  renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== renderer.domElement) return;
+  yaw   -= e.movementX * 0.002;
+  pitch -= e.movementY * 0.002;
+  pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+});
+
+const keys = {};
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+function updatePlayer(){
+  // Subnautica-style: yaw (Y) + pitch (X), bez rolla
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+
+  const speed = 0.15;
+
+  // kierunek poziomy (bez wpływu pitch na ruch)
+  const forward = new THREE.Vector3(
+    -Math.sin(yaw),
+    0,
+    -Math.cos(yaw)
+  ).normalize();
+
+  const right = new THREE.Vector3(
+    Math.cos(yaw),
+    0,
+    -Math.sin(yaw)
+  ).normalize();
+
+  if(keys['KeyW']) camera.position.addScaledVector(forward, speed);
+  if(keys['KeyS']) camera.position.addScaledVector(forward, -speed);
+  if(keys['KeyA']) camera.position.addScaledVector(right, -speed);
+  if(keys['KeyD']) camera.position.addScaledVector(right, speed);
+  if(keys['Space']) camera.position.y += speed;
+  if(keys['ControlLeft']) camera.position.y -= speed;
+
+  flashlight.position.copy(camera.position);
+}
+
+
+// ================= LOOP =================
+function animate(){
+  requestAnimationFrame(animate);
+
+  fishes.forEach(f=>{
+    f.position.x += f.userData.v;
+    if(f.position.x > 60) f.position.x = -60;
+  });
+
+  updatePlayer();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
