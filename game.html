@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8" />
+<title>Subnautica</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+body { margin:0; overflow:hidden; background:#000; }
+
+/* UI */
+#ui{
+  position:fixed; top:10px; left:50%; transform:translateX(-50%);
+  background:rgba(0,0,0,.6); color:#e6f0ff;
+  padding:8px 14px; border-radius:10px;
+  font-family:system-ui; font-size:13px; z-index:10
+}
+#crosshair{
+  position:fixed; left:50%; top:50%; width:6px; height:6px;
+  margin-left:-3px; margin-top:-3px;
+  border-radius:50%; background:#ffffffcc; z-index:10
+}
+
+/* PAUZA */
+#pauseMenu{
+  position:fixed; inset:0;
+  background:rgba(0,0,0,.65);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:30;
+  font-family:system-ui;
+}
+#pauseBox{
+  background:rgba(10,30,45,.95);
+  padding:30px 40px;
+  border-radius:18px;
+  text-align:center;
+  color:#e6f0ff;
+}
+#pauseBox h2{ margin-bottom:20px; letter-spacing:2px; }
+#pauseBox button{
+  display:block;
+  width:200px;
+  margin:10px auto;
+  padding:12px 0;
+  font-size:15px;
+  border:none;
+  border-radius:12px;
+  cursor:pointer;
+  background:linear-gradient(180deg,#4fc3ff,#1b5fa7);
+  color:#fff;
+}
+#pauseBox button:hover{ filter:brightness(1.15); }
+</style>
+</head>
+<body>
+
+<div id="ui">WASD – pływanie • Mysz – rozglądanie • Spacja / Ctrl – góra dół</div>
+<div id="crosshair"></div>
+
+<div id="pauseMenu">
+  <div id="pauseBox">
+    <h2>PAUZA</h2>
+    <button id="resumeBtn">WZNÓW GRĘ</button>
+    <button id="exitBtn">WYJDŹ DO MENU</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+// ================= SCENA =================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x001e2d);
+scene.fog = new THREE.Fog(0x001e2d, 5, 120);
+
+// ================= KAMERA =================
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 500);
+camera.position.set(0, -10, 10);
+
+// ================= RENDERER =================
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ================= ŚWIATŁO =================
+scene.add(new THREE.AmbientLight(0x406070, 0.6));
+const sun = new THREE.DirectionalLight(0x88ccff, 0.8);
+sun.position.set(0, 50, 50);
+scene.add(sun);
+const flashlight = new THREE.PointLight(0xffffff, 1.2, 40);
+scene.add(flashlight);
+
+// ================= NOISE =================
+function noise(x, z){
+  const s = Math.sin(x*12.9898 + z*78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// ================= BIOMY =================
+const CHUNK_SIZE = 100;
+const CHUNK_RES = 32;
+const chunks = new Map();
+
+function biomeAt(x,z){
+  return noise(x*0.01,z*0.01) < 0.35 ? 'abyss' : 'reef';
+}
+
+function createChunk(cx,cz){
+  const key = `${cx},${cz}`;
+  if(chunks.has(key)) return;
+
+  const g = new THREE.PlaneGeometry(CHUNK_SIZE,CHUNK_SIZE,CHUNK_RES,CHUNK_RES);
+  g.rotateX(-Math.PI/2);
+  const v = g.attributes.position;
+
+  for(let i=0;i<v.count;i++){
+    const x = v.getX(i) + cx*CHUNK_SIZE;
+    const z = v.getZ(i) + cz*CHUNK_SIZE;
+    const h = noise(x*0.05,z*0.05);
+    const d = biomeAt(x,z)==='abyss' ? -40-h*25 : -18-h*6;
+    v.setY(i,d);
+  }
+  g.computeVertexNormals();
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: biomeAt(cx*CHUNK_SIZE,cz*CHUNK_SIZE)==='abyss' ? 0x0b1a24 : 0x1f6f5a
+  });
+
+  const m = new THREE.Mesh(g,mat);
+  m.position.set(cx*CHUNK_SIZE,0,cz*CHUNK_SIZE);
+  scene.add(m);
+  chunks.set(key,m);
+}
+
+function updateChunks(){
+  const cx = Math.floor(camera.position.x / CHUNK_SIZE);
+  const cz = Math.floor(camera.position.z / CHUNK_SIZE);
+  for(let x=cx-1;x<=cx+1;x++)
+    for(let z=cz-1;z<=cz+1;z++)
+      createChunk(x,z);
+}
+
+// ================= RYBY =================
+const fishes=[];
+for(let i=0;i<30;i++){
+  const f=new THREE.Mesh(
+    new THREE.SphereGeometry(0.4,12,12),
+    new THREE.MeshStandardMaterial({color:0x88ccff})
+  );
+  f.position.set((Math.random()-0.5)*80,-15+Math.random()*10,(Math.random()-0.5)*80);
+  f.userData.v=0.02+Math.random()*0.03;
+  scene.add(f);
+  fishes.push(f);
+}
+
+// ================= STEROWANIE =================
+let yaw=0,pitch=0;
+const sensitivity=0.002;
+
+renderer.domElement.addEventListener('click',()=>{
+  if(!paused) renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener('mousemove',e=>{
+  if(document.pointerLockElement!==renderer.domElement || paused) return;
+  yaw-=e.movementX*sensitivity;
+  pitch-=e.movementY*sensitivity;
+  const lim=Math.PI/2-0.01;
+  pitch=Math.max(-lim,Math.min(lim,pitch));
+});
+
+const keys={};
+window.addEventListener('keydown',e=>keys[e.code]=true);
+window.addEventListener('keyup',e=>{
+  keys[e.code]=false;
+  if(e.code==='Escape') togglePause();
+});
+
+function updatePlayer(){
+  camera.quaternion.setFromEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));
+  const speed=0.15;
+  const f=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  const r=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
+
+  if(keys.KeyW) camera.position.addScaledVector(f,speed);
+  if(keys.KeyS) camera.position.addScaledVector(f,-speed);
+  if(keys.KeyA) camera.position.addScaledVector(r,-speed);
+  if(keys.KeyD) camera.position.addScaledVector(r,speed);
+  if(keys.Space) camera.position.y+=speed;
+  if(keys.ControlLeft) camera.position.y-=speed;
+
+  flashlight.position.copy(camera.position);
+}
+
+// ================= MUZYKA =================
+const musicFiles=['Music1.mp3','Music2.mp3','Music3.mp3','Music4.mp3'];
+let musicStarted=false;
+function playRandomMusic(){
+  const delay=5000+Math.random()*15000;
+  setTimeout(()=>{
+    const a=new Audio(musicFiles[Math.floor(Math.random()*musicFiles.length)]);
+    a.volume=0.4;
+    a.play();
+    a.onended=playRandomMusic;
+  },delay);
+}
+document.body.addEventListener('click',()=>{
+  if(!musicStarted){musicStarted=true;playRandomMusic();}
+},{once:true});
+
+// ================= PAUZA =================
+let paused=false;
+const pauseMenu=document.getElementById('pauseMenu');
+
+function togglePause(){
+  paused=!paused;
+  pauseMenu.style.display=paused?'flex':'none';
+  if(paused) document.exitPointerLock();
+}
+
+document.getElementById('resumeBtn').onclick=()=>togglePause();
+document.getElementById('exitBtn').onclick=()=>location.href='menu.html';
+
+// ================= LOOP =================
+function animate(){
+  requestAnimationFrame(animate);
+  if(paused) return;
+  fishes.forEach(f=>{f.position.x+=f.userData.v;if(f.position.x>60)f.position.x=-60;});
+  updateChunks();
+  updatePlayer();
+  renderer.render(scene,camera);
+}
+animate();
+
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
